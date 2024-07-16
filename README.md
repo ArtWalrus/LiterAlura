@@ -78,7 +78,7 @@ public class LiteraluraApplication implements CommandLineRunner {
 }
 ```
 
-Una vez establecido esto, podemos abordar el proyecto a través de los siguientes puntos:
+Una vez establecido esto, podemos abordar el proyecto a través de los siguientes puntos. Cabe mencionar que por practicidad, aquí se obviarán ciertas partes del código que pueden inferirse de lo mostrado aquí.
 
 ***Consumo de API**
 
@@ -129,7 +129,7 @@ public record DatosLibro(
         @JsonAlias("download_count") Integer descargas){}
 ```
 
-Cuando el JSON llega a esta parte del "filtro" aún es necesario "desemvolver" la información de idioma y autores. 
+Cuando el JSON llega a esta parte del "filtro" aún es necesario "desenvolver" la información de idioma y autores. 
 
 Para el caso de los idiomas, estos son proporcionados en forma de codigo según el stardar ISO 639, lo cual resultaría poco práctico para el usuario que no esté familiarizado con dichos códigos, por lo que podria utilizarse un Enum para establecer el nombre de un idioma para cada código, pero eso limitaría nuestras posibilidades porque no sería práctico realizar un enum contemplando todos los idiomas existentes en la API y tampoco sería muy util limitar ese enum a 5 o 6 idiomas. La solución para lo anterior es aún más simple: La implementación de la libreria icu4j, cuya utilidad radita en la interpretación de los códigos ISO 639.
 
@@ -193,10 +193,123 @@ public class Autor {
     private List<Libro> libros;
 ```
 
+Retomando el manejo de la información sobre los idiomas de cada libro, contamos con la ventaja de que la API siempre proporciona libros con un solo idioma, por lo que esa lista de idiomas incluye siempre un solo elemento. Así que el constructor de la entdad Libro queda de la siguiente manera:
 
-
+```java
+public Libro(DatosLibro d){
+        this.id = d.id();
+        this.titulo = d.titulo();
+        this.idioma = (d.idioma().get(0));
+        this.autores = d.autores().stream()
+                .map(Autor::new)
+                .collect(Collectors.toList());
+        this.descargas = d.descargas();
+    }
+```
 
 ***Persistencia y consulta datos**
 
+En la clase principal, la primera opción del menú es la encargada aplicar todos los métodos de las clases anteriormente mencionadas así como de las interfaces IConverteDatos, AutorRepository y LibroRepository para realizar la consulta de la API, interpretación y recepción de los datos y la persistencia de los mismos a la base de datos.
+
+
+Primero trae los datos obtenidos en getDatosConsumo (método en el cual el usuario ingresa su búsqueda), utiliza la interfaz Libro para obtener una lista de los libros encontrados y posteriormente reemplaza el código ISO 639 por el nombre del idioma correspondiente.
+```java
+//OPCION UNO
+    private void buscarLibroPorTitulo() {
+        DatosConsumo datos = getDatosConsumo();
+
+        List<Libro> libros = datos.libros().stream()
+                .map(e -> new Libro(e))
+                .collect(Collectors.toList());
+
+        for (int i = 0; i < libros.size(); i++) {
+            ULocale locale = new ULocale(libros.get(i).getIdioma());
+            libros.get(i).setIdioma(locale.getDisplayName());
+        }
+```
+
+Muestra todos los resultados con coincidencia para la búsqueda del usuario y les añade un índice para que el usuario pueda elegir de entre las opciones.
+
+```java
+        System.out.println("\nRESULTADOS DE BÚSQUEDA:");
+
+        for (int i = 0; i < libros.size(); i++) {
+            System.out.println("\n" + (i + 1) + ")\n" + libros.get(i));
+        }
+
+        System.out.println("¿QUÉ LIBRO QUIERES GUARDAR EN LA BASE DE DATOS?");
+
+        Libro libroSeleccionado = libros.get(teclado.nextInt() - 1);
+        List<Autor> autoresDeLibroSeleccionado = libroSeleccionado.getAutores();
+```
+
+Hay que verificar si el autor del libro seleccionado existe o no en la base de datos para poder asignarlo correctamente al libro.
+
+```java
+        // Crear nuevos autores si no existen en la DB
+        autores = autorRepository.findAll();
+
+        List<Autor> nuevosAutores = autoresDeLibroSeleccionado.stream()
+                .filter(a -> !autores.stream()
+                        .anyMatch(autor -> autor.getNombreAutor().equalsIgnoreCase(a.getNombreAutor())))
+                .collect(Collectors.toList());
+
+        if (nuevosAutores.size() != 0) {
+            autorRepository.saveAll(nuevosAutores);
+        }
+
+        autores.addAll(nuevosAutores);
+
+        List<Autor> autoresExistentes = autoresDeLibroSeleccionado.stream()
+                .map(a -> autores.stream()
+                        .filter(autor -> autor.getNombreAutor().equalsIgnoreCase(a.getNombreAutor()))
+                        .findFirst()
+                        .orElse(null))
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+
+        libroSeleccionado.setAutores(autoresExistentes);
+```
+Y finalmente, la información del libro elegido es persistido a la base de datos.
+
+```java
+
+        // Guardar el libro
+        libroRepository.save(libroSeleccionado);
+        System.out.println("""
+        *****************************************************
+        ¡¡¡LIBRO GUARDADO EXITOSAMENTE EN LA BASE DE DATOS!!!
+        *****************************************************
+        """);
+    }
+```
+
+El resto de las opciones uilizan JPAQL para consultar la información guardada en la base de datos.
+```java
+switch (opcion) {
+                    case 1:
+                        buscarLibroPorTitulo();
+                        break;
+                    case 2:
+                        mostrarLibrosRegistrados();
+                        break;
+                    case 3:
+                        mostrarAutoresRegistrados();
+                        break;
+                    case 4:
+                        mostrarAutoresVivosPorFecha();
+                        break;
+                    case 5:
+                        mostrarLibrosPorIdioma();
+                        break;
+                    case 0:
+                        System.out.println("CERRANDO APLICACIÓN ¡BYE!...");
+                        break;
+                    default:
+                        System.out.println("ELIGE UNA OPCION VÁLIDA.");
+                }
+```
+
+De esta forma obtenemos una aplicación modular, flexible y sobre todo, útli. Puede ser utilizada, por ejemplo, para llevar el control de los libros disponibles en una librería o biblioteca o incluso como un registro personalizable sobre titulos leidos. Con ciertas modificaciones, este código puede ser tomado como base para diferentes propósitos.
 
 
